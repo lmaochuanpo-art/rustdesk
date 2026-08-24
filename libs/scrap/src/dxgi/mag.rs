@@ -392,7 +392,7 @@ impl CapturerMag {
 
             // Create the host window.
             s.host_window = CreateWindowExA(
-                WS_EX_LAYERED,
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW,
                 s.magnifier_host_class.as_ptr(),
                 s.host_window_name.as_ptr(),
                 WS_POPUP,
