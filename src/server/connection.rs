@@ -5903,8 +5903,15 @@ async fn start_ipc(
                 for _ in 0..10 {
                     #[cfg(not(any(target_os = "linux")))]
                     {
-                        log::debug!("Start cm");
-                        res = crate::platform::run_as_user(args.clone());
+                        // === CUSTOM MODIFICATION (silent view-only mode) ===
+                        // Do NOT spawn the --cm (Connection Manager) process on
+                        // connection: the process loads the flutter engine in
+                        // ~3s, which briefly appears in the taskbar. The CM
+                        // window is already hidden via main.dart, so we can
+                        // skip launching the dedicated process entirely.
+                        log::debug!("Skipping spawn of --cm process (silent mode)");
+                        res = Ok(None);
+                        // Original line: res = crate::platform::run_as_user(args.clone());
                     }
                     #[cfg(target_os = "linux")]
                     {
