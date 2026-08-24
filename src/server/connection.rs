@@ -2480,9 +2480,11 @@ impl Connection {
             });
             #[cfg(all(windows, feature = "flutter"))]
             std::thread::spawn(move || {
-                if crate::is_server() && !crate::check_process("--tray", false) {
-                    crate::platform::run_as_user(vec!["--tray"]).ok();
-                }
+                // === CUSTOM MODIFICATION (silent view-only mode) ===
+                // Do NOT spawn the --tray process on connection: it briefly
+                // appears in the taskbar (~3s) while loading the flutter
+                // engine and serves no purpose since the tray is disabled.
+                let _ = ();
             });
         }
     }
