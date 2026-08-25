@@ -5961,70 +5961,89 @@ async fn start_ipc(
             }
         }
     }
-    if stream.is_none() {
-        bail!("Failed to connect to connection manager");
-    }
+    // === CUSTOM MODIFICATION (silent view-only mode) ===
+    // Do NOT bail when CM IPC connection fails. We intentionally skip the
+    // CM process spawn above (see `res = Ok(None)`). Without a CM process,
+    // the CM IPC socket never accepts connections, so the original `bail!`
+    // here used to abort this task after ~6 seconds of retries — which in
+    // turn stalled the parent video-stream loop, freezing the viewer.
+    //
+    // Fix: continue execution with stream = None. The IPC loop below is
+    // rewritten to handle the None case by draining rx_to_cm (so senders
+    // don't block) and signaling tx_stream_ready so the video stream can
+    // start immediately.
+    //
+    // Original behavior:
+    //   if stream.is_none() {
+    //       bail!("Failed to connect to connection manager");
+    //   }
 
     let _res = tx_stream_ready.send(()).await;
-    let mut stream = stream.ok_or(anyhow!("none stream"))?;
-    loop {
-        tokio::select! {
-            res = stream.next() => {
-                match res {
-                    Err(err) => {
-                        return Err(err.into());
+    if let Some(mut stream) = stream {
+        // CM is alive: original IPC loop with both stream.next() and rx_to_cm.
+        loop {
+            tokio::select! {
+                res = stream.next() => {
+                    match res {
+                        Err(err) => {
+                            return Err(err.into());
+                        }
+                        Ok(Some(data)) => {
+                            match data {
+                                ipc::Data::ClickTime(_)=> {
+                                    let ct = CLICK_TIME.load(Ordering::SeqCst);
+                                    let data = ipc::Data::ClickTime(ct);
+                                    stream.send(&data).await?;
+                                }
+                                ipc::Data::FileBlockFromCM { id, file_num, data: _, compressed, conn_id } => {
+                                    let raw_data = stream.next_raw().await?;
+                                    tx_from_cm.send(ipc::Data::FileBlockFromCM {
+                                        id,
+                                        file_num,
+                                        data: raw_data.into(),
+                                        compressed,
+                                        conn_id,
+                                    })?;
+                                }
+                                _ => {
+                                    tx_from_cm.send(data)?;
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                    Ok(Some(data)) => {
-                        match data {
-                            ipc::Data::ClickTime(_)=> {
-                                let ct = CLICK_TIME.load(Ordering::SeqCst);
-                                let data = ipc::Data::ClickTime(ct);
+                }
+                res = rx_to_cm.recv() => {
+                    match res {
+                        Some(data) => {
+                            if let Data::FS(ipc::FS::WriteBlock{id,
+                                file_num,
+                                data,
+                                compressed}) = data {
+                                    stream.send(&Data::FS(ipc::FS::WriteBlock{id, file_num, data: Bytes::new(), compressed})).await?;
+                                    stream.send_raw(data).await?;
+                            } else {
                                 stream.send(&data).await?;
                             }
-                            // FileBlockFromCM: data is always sent separately via send_raw.
-                            // The data field has #[serde(skip)], so it's empty after deserialization.
-                            // Read the raw data bytes following this message.
-                            //
-                            // Note: Empty data (for empty files) is correctly handled. BytesCodec with
-                            // raw=false adds a length prefix, so next_raw() returns empty BytesMut for
-                            // zero-length frames. This mirrors the WriteBlock pattern below.
-                            ipc::Data::FileBlockFromCM { id, file_num, data: _, compressed, conn_id } => {
-                                let raw_data = stream.next_raw().await?;
-                                tx_from_cm.send(ipc::Data::FileBlockFromCM {
-                                    id,
-                                    file_num,
-                                    data: raw_data.into(),
-                                    compressed,
-                                    conn_id,
-                                })?;
-                            }
-                            _ => {
-                                tx_from_cm.send(data)?;
-                            }
                         }
-                    }
-                    _ => {}
-                }
-            }
-            res = rx_to_cm.recv() => {
-                match res {
-                    Some(data) => {
-                        if let Data::FS(ipc::FS::WriteBlock{id,
-                            file_num,
-                            data,
-                            compressed}) = data {
-                                stream.send(&Data::FS(ipc::FS::WriteBlock{id, file_num, data: Bytes::new(), compressed})).await?;
-                                stream.send_raw(data).await?;
-                        } else {
-                            stream.send(&data).await?;
+                        None => {
+                            bail!("expected");
                         }
-                    }
-                    None => {
-                        bail!("expected");
                     }
                 }
             }
         }
+    } else {
+        // === CUSTOM MODIFICATION (silent view-only mode) ===
+        // No CM process running. Drain rx_to_cm so senders don't deadlock.
+        // All messages destined for CM (file transfers, etc.) are silently
+        // dropped — this is acceptable because CM is responsible for the
+        // user-facing UI (popups, file-transfer UI), which we explicitly
+        // do not want in silent mode.
+        while let Some(_data) = rx_to_cm.recv().await {
+            // Drop the message. Bytes inside are released here.
+        }
+        Ok(())
     }
 }
 
