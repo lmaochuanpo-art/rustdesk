@@ -5899,7 +5899,7 @@ async fn start_ipc(
         if stream.is_none() {
             let run_done;
             if crate::platform::is_root() {
-                let mut res = Ok(None);
+                let mut res: hbb_common::ResultType<Option<std::process::Child>> = Ok(None);
                 for _ in 0..10 {
                     #[cfg(not(any(target_os = "linux")))]
                     {
